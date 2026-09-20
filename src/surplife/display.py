@@ -35,6 +35,18 @@ log = logging.getLogger(__name__)
 # Default timeout for waiting on device responses.
 RESPONSE_TIMEOUT = 5.0
 
+# Inter-segment pacing for e0 32 uploads. The device's firmware write
+# queue overflows when segments are written back-to-back in bulk: uploads
+# of ~100+ segments complete but crash the device right after. The
+# original monolithic script used 300ms; the app paces similarly. 25ms
+# (~20 KB/s) has been stable for large GIFs; small uploads (few segments)
+# are sent unpaced.
+SEGMENT_PACE_S = 0.025
+PACED_SEGMENTS_THRESHOLD = 8
+
+# Settle time after the upload end marker before screen prepare/activation.
+UPLOAD_SETTLE_S = 0.5
+
 # Device response packets have an 8-byte wrapper header before the inner payload.
 RESPONSE_HEADER_SIZE = 8
 
@@ -155,20 +167,35 @@ class SurplifeDisplay:
           2. 10 14 time sync — no ACK
           3. ea 81 device hash — ACK: 15 ea 81, then 16 ea 81 (~1.5s later)
         Commands sent before the second ea 81 response don't take effect.
+
+        Occasionally the device misses the second response (observed after
+        heavy content playback); one retry of the whole handshake usually
+        recovers it.
         """
-        # Step 1: init trigger (no ACK)
-        await self._send_raw(b"\x0c")
+        for attempt in (1, 2):
+            try:
+                # Step 1: init trigger (no ACK)
+                await self._send_raw(b"\x0c")
 
-        # Step 2: time sync (no ACK)
-        await self.set_time()
+                # Step 2: time sync (no ACK)
+                await self.set_time()
 
-        # Step 3: device hash exchange (two ACKs)
-        await self._send(b"\xea\x81\x8a\x8b\x59")
-        await self._wait_for(lambda r: _match(r, 0x15, 0xea, 0x81))
-        status = await self._wait_for(lambda r: _match(r, 0x16, 0xea, 0x81))
-        self._parse_status(status)
-        log.info("Init complete (time synced: %s)",
-                 datetime.datetime.now().strftime("%H:%M:%S"))
+                # Step 3: device hash exchange (two ACKs)
+                await self._send(b"\xea\x81\x8a\x8b\x59")
+                await self._wait_for(lambda r: _match(r, 0x15, 0xea, 0x81))
+                status = await self._wait_for(
+                    lambda r: _match(r, 0x16, 0xea, 0x81))
+                self._parse_status(status)
+                log.info("Init complete (time synced: %s)",
+                         datetime.datetime.now().strftime("%H:%M:%S"))
+                return
+            except TimeoutError:
+                if attempt == 1:
+                    log.warning("Init incomplete (second ea 81 missing), retrying...")
+                    self._notify_queue.clear()
+                    await asyncio.sleep(1.0)
+                    continue
+                raise
 
     @property
     def status_str(self) -> str:
@@ -579,17 +606,23 @@ class SurplifeDisplay:
         return await self.show_image(Image.open(path), **kwargs)
 
     async def show_gif(self, gif_data: bytes, speed: int = 50,
-                       force: bool = False) -> bytes:
+                       force: bool = False,
+                       check: bool = True) -> bytes:
         """Upload and play a GIF animation.
 
         Args:
             gif_data: Raw GIF file bytes (should be 96x16).
             speed: Animation speed 1-100.
             force: Bypass device cache.
+            check: Validate against the device-safe envelope first
+                (see validate_gif(); unsafe GIFs can crash the device).
 
         Returns:
             16-byte content hash.
         """
+        if check:
+            report = validate_gif(gif_data)
+            log.debug("GIF envelope check: %s", report)
         meta = json.dumps({
             "v": 1, "mant_type": 0, "enable_a2pl": 1,
             "layers": [{
@@ -674,6 +707,141 @@ class SurplifeDisplay:
                  text[:30], num_cols, frame_num, len(payload), speed)
         return c_hash
 
+    # ── Graffiti / direct pixel drawing ─────────────────────────────
+    #
+    # Two mechanisms (traces 14–62):
+    #   - Type "c"/"d" uploads (show_graffiti, show_graffiti_gif): content
+    #     goes into the device cache and is activated with ea 09 / ea 0a.
+    #   - Direct draw (draw_frame): ea 11 with a raw a2pl stream covering
+    #     the full framebuffer. The device renders it immediately; every
+    #     draw replaces the whole canvas (trace 60 — the app accumulates
+    #     pixels client-side and redraws everything on each stroke).
+
+    async def show_graffiti(self, img: Image.Image,
+                            force: bool = False) -> bytes:
+        """Upload and display a static graffiti image (content type "c").
+
+        Functionally identical to a static image (show_image with
+        effect=1), but cached under the graffiti category.
+
+        Args:
+            img: PIL Image (any size/mode).
+            force: Bypass device cache by using a random content hash.
+
+        Returns:
+            16-byte content hash.
+        """
+        fb, num_cols = image_to_framebuffer(img)
+        payload, frame_num, _ = _build_a2pl_payload(fb, num_cols)
+
+        meta = json.dumps({
+            "v": 1, "mant_type": 0, "enable_a2pl": 1,
+            "layers": [{
+                "nm": str(uuid.uuid4()), "type": "c", "amt_pos": 0,
+                "frame_num": 1, "amt_length": len(payload), "amt_fmt": 0,
+            }],
+            "all_file_type": "c",
+        }, separators=(',', ':'))
+
+        c_hash = os.urandom(16) if force else _content_hash("c", payload)
+        await self._upload_content(
+            0x00, meta.encode(), payload,
+            b"\xea\x09\x00\x50\x01", c_hash,
+        )
+        log.info("Graffiti sent (%dx16, %dB)", num_cols, len(payload))
+        return c_hash
+
+    async def show_graffiti_file(self, path: str, **kwargs) -> bytes:
+        """Load an image file and display it as graffiti. See show_graffiti()."""
+        return await self.show_graffiti(Image.open(path), **kwargs)
+
+    async def show_graffiti_gif(self, gif_data: bytes,
+                                force: bool = False) -> bytes:
+        """Upload and play a graffiti animation (content type "d").
+
+        Functionally identical to show_gif() (raw GIF upload), but cached
+        under the graffiti-animation category and activated with ea 0a
+        instead of ea 07 (trace 62).
+
+        Args:
+            gif_data: Raw GIF file bytes (should be 96x16).
+            force: Bypass device cache.
+
+        Returns:
+            16-byte content hash.
+        """
+        meta = json.dumps({
+            "v": 1, "mant_type": 0, "enable_a2pl": 1,
+            "layers": [{
+                "nm": str(uuid.uuid4()), "type": "d", "amt_pos": 0,
+                "frame_num": 0, "amt_length": len(gif_data), "amt_fmt": 2,
+            }],
+            "all_file_type": "d",
+        }, separators=(',', ':'))
+
+        c_hash = os.urandom(16) if force else _content_hash("d", gif_data)
+        await self._upload_content(
+            0x02, meta.encode(), gif_data,
+            b"\xea\x0a\x00\x50\x01", c_hash,
+        )
+        log.info("Graffiti animation sent (%dB)", len(gif_data))
+        return c_hash
+
+    async def show_graffiti_gif_file(self, path: str, **kwargs) -> bytes:
+        """Load a GIF file and play it as a graffiti animation."""
+        with open(path, 'rb') as f:
+            data = f.read()
+        if data[:3] != b'GIF':
+            raise ValueError(f"Not a GIF file: {path}")
+        return await self.show_graffiti_gif(data, **kwargs)
+
+    async def draw_frame(self, fb: bytes) -> None:
+        """Direct draw: replace the entire display contents immediately.
+
+        Sends ea 11 with the canvas as a raw a2pl stream (no header,
+        no offset table). No ACK. Trailing literal bytes are guaranteed
+        by compress() (firmware off-by-one bug, see A2PL.md).
+
+        Args:
+            fb: Full framebuffer (3072 bytes, column-major, 16-bit HSV).
+        """
+        if len(fb) != FRAMEBUFFER_SIZE:
+            raise ValueError(
+                f"Framebuffer must be {FRAMEBUFFER_SIZE} bytes, got {len(fb)}")
+        stream = compress(fb)
+        if len(stream) > 255:
+            raise ValueError(
+                f"Compressed canvas is {len(stream)} bytes; direct draw "
+                "supports at most 255 (a plain black or mostly-uniform "
+                "canvas is fine; sparse colorful pixels too).")
+        await self._send(bytes([0xea, 0x11, 0x00, 0x00, 0x00, len(stream)])
+                         + stream)
+        log.debug("Direct draw: %d -> %dB", len(fb), len(stream))
+
+    async def draw_pixels(self, pixels: dict[tuple[int, int],
+                                             tuple[int, int, int] | None],
+                          clear: bool = False) -> None:
+        """Draw pixels at (col, row) positions in one direct-draw frame.
+
+        Args:
+            pixels: Mapping of (col, row) to RGB color; a None value
+                erases that pixel (black).
+            clear: Erase the whole canvas first (black framebuffer).
+        """
+        from .color import rgb_to_display
+
+        fb = bytearray(FRAMEBUFFER_SIZE)
+        for (col, row), rgb in pixels.items():
+            if not (0 <= col < DISPLAY_COLS and 0 <= row < DISPLAY_ROWS):
+                raise ValueError(
+                    f"Pixel ({col}, {row}) outside {DISPLAY_COLS}x{DISPLAY_ROWS}")
+            pos = col * DISPLAY_ROWS * BYTES_PER_PIXEL + row * BYTES_PER_PIXEL
+            if rgb is None:
+                fb[pos] = fb[pos + 1] = 0x00
+            else:
+                fb[pos], fb[pos + 1] = rgb_to_display(*rgb)
+        await self.draw_frame(bytes(fb))
+
     async def _upload_content(self, cache_type: int, meta_bytes: bytes,
                               payload: bytes, activate_cmd: bytes,
                               c_hash: bytes) -> None:
@@ -715,9 +883,14 @@ class SurplifeDisplay:
                 match=lambda r: _match(r, 0x15, 0xe0, 0x30),
             )
 
-            # 3. Data segments — no ACK, sent back-to-back
+            # 3. Data segments — no ACK. Paced for bulk uploads (see
+            # SEGMENT_PACE_S above): unpaced 100+ segment floods crash the
+            # device after the upload completes.
             num_segments = (total_size + MAX_SEGMENT_SIZE - 1) // MAX_SEGMENT_SIZE
+            pace = SEGMENT_PACE_S if num_segments > PACED_SEGMENTS_THRESHOLD else 0.0
             for seg_idx in range(num_segments):
+                if seg_idx and pace:
+                    await asyncio.sleep(pace)
                 offset = seg_idx * MAX_SEGMENT_SIZE
                 chunk = content[offset:offset + MAX_SEGMENT_SIZE]
                 seg_header = (
@@ -734,6 +907,10 @@ class SurplifeDisplay:
                 match=lambda r: _match(r, 0x15, 0xe0, 0x33),
             )
 
+            # 4b. Settle — the device needs a moment after the end marker
+            # before screen prepare/activation.
+            await asyncio.sleep(UPLOAD_SETTLE_S)
+
             # 5. Screen prepare (2x) — no ACK
             await self._send(b"\xe0\x1e\x00")
             await self._send(b"\xe0\x1e\x00")
@@ -743,6 +920,90 @@ class SurplifeDisplay:
                 activate_cmd,
                 match=lambda r: _match(r, 0x15, 0xea, 0x24),
             )
+
+
+def validate_gif(gif_data: bytes, strict: bool = True) -> dict:
+    """Check a GIF against the device's known-safe envelope.
+
+    See PROTOCOL.md "GIF Device Limitations". Unsafe GIFs can crash the
+    device firmware *after* the upload completes.
+
+    Args:
+        gif_data: Raw GIF bytes.
+        strict: Raise on violations. False = return the report only.
+
+    Returns:
+        Report dict with per-property ok/violation info.
+
+    Raises:
+        ValueError: If strict and any property is outside the envelope.
+    """
+    if gif_data[:6] not in (b'GIF87a', b'GIF89a'):
+        raise ValueError("Not a GIF file")
+
+    packed = gif_data[10]
+    report = {
+        "global_color_table": bool((packed >> 7) & 1),
+        "global_table_entries": 2 << (packed & 7) if (packed >> 7) & 1 else 0,
+        "local_color_tables": 0,
+        "frames": 0,
+        "min_frame_delay_cs": None,
+        "size_bytes": len(gif_data),
+        "ok": True,
+    }
+
+    idx = 13 + (3 * report["global_table_entries"] if (packed >> 7) & 1 else 0)
+    delays: list[int] = []
+    while idx < len(gif_data):
+        b = gif_data[idx]
+        if b == 0x21:  # extension
+            if gif_data[idx + 1] == 0xF9 and idx + 8 <= len(gif_data):
+                delays.append(gif_data[idx + 4] | (gif_data[idx + 5] << 8))
+            idx += 2
+            while idx < len(gif_data) and gif_data[idx] != 0:
+                idx += gif_data[idx] + 1
+            idx += 1
+        elif b == 0x2C:  # image descriptor
+            report["frames"] += 1
+            ip = gif_data[idx + 9]
+            if (ip >> 7) & 1:
+                report["local_color_tables"] += 1
+                entries = 2 ** ((ip & 7) + 1)
+                idx += 11 + 3 * entries
+            else:
+                idx += 10
+            idx += 1  # LZW min code size
+            while idx < len(gif_data) and gif_data[idx] != 0:
+                idx += gif_data[idx] + 1
+            idx += 1
+        elif b == 0x3B:  # trailer
+            break
+        else:
+            idx += 1
+
+    if delays:
+        report["min_frame_delay_cs"] = min(delays)
+
+    checks = [
+        (report["local_color_tables"] == 0,
+         f"{report['local_color_tables']} local color table(s); the device "
+         "supports only a single global color table"),
+        (report["min_frame_delay_cs"] is None or report["min_frame_delay_cs"] >= 10,
+         f"frame delay {report['min_frame_delay_cs']}cs too fast; use >= 10cs "
+         "(100ms, <=10 fps)"),
+        (report["size_bytes"] <= 64 * 1024,
+         f"GIF is {report['size_bytes']} bytes; observed-safe size is <= 64KB"),
+    ]
+    report["violations"] = [msg for ok, msg in checks if not ok]
+    report["ok"] = not report["violations"]
+
+    if strict and not report["ok"]:
+        raise ValueError(
+            "GIF outside the device-safe envelope (risk of firmware crash):\n  "
+            + "\n  ".join(report["violations"])
+            + "\nRe-render with a single global color table and frame delay "
+              ">= 100ms (see README 'Device-safe GIFs').")
+    return report
 
 
 def _build_a2pl_payload(fb: bytes, num_cols: int) -> tuple[bytes, int, int]:

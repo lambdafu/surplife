@@ -32,6 +32,12 @@ def encode_hsv(h: int, s: int = 100, v: int = 100) -> bytes:
     return bytes([byte1, byte2])
 
 
+def rgb_to_display(r: int, g: int, b: int) -> bytes:
+    """Convert an RGB color to the 2-byte display framebuffer format."""
+    h_f, s_f, v_f = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+    return encode_hsv(h_f * 360, s_f * 100, v_f * 100)
+
+
 def decode_hsv(b1: int, b2: int) -> tuple[float, float, float]:
     """Decode 2 display bytes to HSV values.
 

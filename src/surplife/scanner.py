@@ -15,6 +15,13 @@ from .protocol import BLE_MANUFACTURER_ID, BLE_NAME_PREFIX
 
 log = logging.getLogger(__name__)
 
+# Some BlueZ/adapter combinations (e.g. BlueZ 5.87 + MediaTek MT7921) reject
+# the default LE-filtered discovery with org.bluez.Error.InProgress, likely
+# when another client's LE-filtered session is (or was) registered. Scanning
+# with Transport='auto' works around it. bleak lets us override its default
+# discovery filters via bluez={"filters": {...}}.
+_BLE_TRANSPORT_FILTER = {"Transport": "auto"}
+
 
 @dataclass
 class SurplifeDevice:
@@ -49,6 +56,19 @@ def _is_surplife(name: str | None, adv: AdvertisementData) -> bool:
     if BLE_MANUFACTURER_ID in adv.manufacturer_data:
         return True
     return False
+
+
+def _make_scanner(detection_callback) -> BleakScanner:
+    """Create a BleakScanner with the LE-transport filter workaround."""
+    try:
+        from bleak.args.bluez import BlueZScannerArgs
+
+        return BleakScanner(
+            detection_callback=detection_callback,
+            bluez=BlueZScannerArgs(filters=_BLE_TRANSPORT_FILTER),
+        )
+    except ImportError:
+        return BleakScanner(detection_callback=detection_callback)
 
 
 def _make_device(device: BLEDevice, adv: AdvertisementData) -> SurplifeDevice:
@@ -101,7 +121,7 @@ async def discover_live(
         if is_new and on_update is not None:
             on_update(list(found.values()), len(total_seen))
 
-    scanner = BleakScanner(detection_callback=_on_detect)
+    scanner = _make_scanner(_on_detect)
     await scanner.start()
     await asyncio.sleep(timeout)
     await scanner.stop()
@@ -133,7 +153,7 @@ async def _find_first(
             return
         found.set_result(_make_device(device, adv))
 
-    scanner = BleakScanner(detection_callback=_on_detect)
+    scanner = _make_scanner(_on_detect)
     await scanner.start()
     try:
         return await asyncio.wait_for(found, timeout=timeout)

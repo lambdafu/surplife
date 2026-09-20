@@ -8,6 +8,7 @@ import logging
 import click
 
 from . import __version__
+from .color import parse_rgb_hex
 from .display import PLAYLIST_DEFAULT_DURATION, SurplifeDisplay
 from .scanner import discover
 
@@ -146,10 +147,49 @@ def gif(ctx: click.Context, file: str, speed: int, force: bool) -> None:
 def text(ctx: click.Context, message: str, color: tuple[str, ...],
          speed: int, font_size: int, force: bool) -> None:
     """Upload and display scrolling text."""
-    from .color import parse_rgb_hex
     colors = [parse_rgb_hex(c) for c in color] if color else None
     asyncio.run(_run(ctx, lambda d: d.show_text(
         message, colors=colors, speed=speed, font_size=font_size, force=force)))
+
+
+@cli.command()
+@click.argument("coords", metavar="X,Y [X,Y ...]", nargs=-1, required=True)
+@click.option("-c", "--color", default="ff0000", help="Pixel color as hex RGB.")
+@click.option("--clear", is_flag=True, help="Erase everything else (default: black canvas).")
+@click.pass_context
+def pixel(ctx: click.Context, coords: tuple[str, ...], color: str, clear: bool) -> None:
+    """Direct-draw pixels at X,Y positions (0,0 = top-left, 95,15 = bottom-right).
+
+    Direct draw replaces the entire display with a black canvas plus the
+    given pixels, without uploading to the device content cache.
+    """
+    pixels = {}
+    for spec in coords:
+        try:
+            x_s, y_s = spec.split(",", 1)
+            x, y = int(x_s), int(y_s)
+        except ValueError:
+            raise click.BadParameter(f"'{spec}' — expected X,Y (e.g. 5,3)")
+        pixels[(x, y)] = parse_rgb_hex(color)
+    asyncio.run(_run(ctx, lambda d: d.draw_pixels(pixels)))
+
+
+@cli.command()
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--force", is_flag=True, help="Bypass device cache.")
+@click.pass_context
+def graffiti(ctx: click.Context, file: str, force: bool) -> None:
+    """Upload and display a static graffiti image (device graffiti category)."""
+    asyncio.run(_run(ctx, lambda d: d.show_graffiti_file(file, force=force)))
+
+
+@cli.command(name="graffiti-gif")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--force", is_flag=True, help="Bypass device cache.")
+@click.pass_context
+def graffiti_gif(ctx: click.Context, file: str, force: bool) -> None:
+    """Upload and play a graffiti animation GIF (device graffiti category)."""
+    asyncio.run(_run(ctx, lambda d: d.show_graffiti_gif_file(file, force=force)))
 
 
 @cli.command()

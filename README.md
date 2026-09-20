@@ -36,6 +36,9 @@ surplife clock 3 --date
 surplife image photo.png -e breathe
 surplife gif animation.gif -s 80
 surplife text "Hello World!" -c ff0000 -c 00ff00 -c 0000ff
+surplife pixel 5,3 9,5 -c ff0000
+surplife graffiti drawing.png
+surplife graffiti-gif doodle.gif
 surplife playlist list
 surplife playlist add <hash> -t 15
 surplife playlist rm <hash>
@@ -75,6 +78,9 @@ Connected to IOTBT905 [2]  power=on brightness=80% speed=50 96x16
 > playlist
 > playlist-rm e006
 > brightness 50
+> draw 5,3 ff0000
+> draw 9,5
+> draw-clear
 > clock 7 date
 > status
 > list
@@ -100,6 +106,12 @@ async def main():
 
         # Scrolling text with gradient
         await display.show_text("Hello!", colors=[(255,0,0), (0,255,0)])
+
+        # Graffiti (device graffiti category)
+        await display.show_graffiti_file("drawing.png")
+
+        # Direct pixel drawing (replaces the whole display)
+        await display.draw_pixels({(5, 3): (255, 0, 0), (9, 5): (0, 255, 0)})
 
         # Playlist (carousel of cached content)
         c_hash = await display.show_gif_file("animation.gif")
@@ -158,11 +170,43 @@ Work in progress. Currently implemented:
 - Content caching (device-side, with `--force` bypass)
 - Interactive shell with multi-device support and tab completion
 - Playlist / carousel management (add, remove, reorder, list)
+- Graffiti upload (static image + animation GIF, device graffiti category)
+- Direct pixel drawing (`ea 11` live draw, stateless CLI / per-device canvas in shell)
 - Waveform (audio visualizer) style configuration and streaming (experimental, shell only)
 
-Not yet implemented:
+## Device-safe GIFs
 
-- Graffiti / direct pixel draw
+The device's GIF decoder is fragile — see
+[PROTOCOL.md "GIF Device Limitations"](PROTOCOL.md#gif-device-limitations--confirmed--crash-tested).
+GIFs with local color tables or frame delays under 100 ms crash the firmware
+after the upload completes. All GIF uploads are validated by default
+(`validate_gif()`); pass `check=False` to override.
+
+```python
+from surplife.display import validate_gif
+
+report = validate_gif(open("animation.gif", "rb").read(), strict=False)
+print(report)   # {'ok': True, 'frames': 64, ...} or violation list
+```
+
+To render arbitrary RGB animations safely, quantize all frames against a
+single shared 128-color palette, use a frame delay of 150 ms, and verify
+with `validate_gif()` before upload.
+
+## Docker
+
+The container talks to the host's BlueZ stack over the system D-Bus socket.
+This requires a **Linux host** with bluetoothd running (Docker Desktop on
+macOS/Windows cannot expose the host Bluetooth adapter), and a user in the
+`bluetooth` group (or root).
+
+```
+docker compose build
+docker compose run --rm surplife scan
+docker compose run --rm surplife -d D98 brightness 80
+docker compose run --rm surplife shell
+docker compose run --rm surplife -d D98 pixel 5,3 9,5 -c ff0000
+```
 
 ## Protocol documentation
 
@@ -174,7 +218,8 @@ Not yet implemented:
 
 `research/` holds the material the protocol documentation was derived from:
 BTSnoop HCI captures (`research/traces/`), the trace analysis and capture parsing
-scripts, the a2pl decompressor test suite, notes on the APK decompilation, and the
+scripts, the a2pl decompressor test suite, notes on the APK decompilation, the
+graffiti direct-draw replay test (`research/test_graffiti_replay.py`), and the
 original monolithic `surplife.py` script that preceded this package.
 
 ## License

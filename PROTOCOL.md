@@ -64,7 +64,8 @@ practical purposes, both should be accepted when waiting for responses.
 
 Types `"b"` and `"d"` are functionally identical on the protocol level — both
 upload raw GIF data. The type field likely just tells the app which UI category
-the content belongs to.
+the content belongs to. Both type `"c"` and `"d"` are confirmed by traces 14–62;
+the library exposes them as `show_graffiti()` and `show_graffiti_gif()`.
 
 **Type `"a"` multi-frame scrolling:** Type `"a"` supports `frame_num > 1` with
 the same multi-frame a2pl payload format as type `"e"`. Combined with `ea 06`
@@ -113,7 +114,7 @@ The device decodes GIF natively. No header prefix.
 | `ea 0c` | `15 ea 0c [count] [entries]` | Get playlist (see below) |
 | `ea 0d [count] [entries]` | `15 ea 0d 00` | Set playlist details (see below) |
 | `ea 0e` | `15 ea 0e [count] [entries]` | Get playlist details (see below) |
-| `ea 11 00 00 00 [len] [data]` | — | Direct draw (a2pl, max 255 bytes) |
+| `ea 11 00 00 00 [len] [data]` | — | Direct draw (see `ea 11` section below) |
 | `ea 24` | `15 ea 24 00` | Activate text (type "e") |
 | `ea 10 [style] [fmt] [date]` | — | Show firmware clock (see below) |
 | `ea 14 01` | — | Sent by app after init (purpose unclear) |
@@ -159,6 +160,45 @@ then `ea 06 01 [speed] [effect]`.
 | 8 | sweep | Image reveals column by column, left to right |
 | 9 | bands | Shows ~4 rows at a time, top to bottom |
 | 10 | wipe | Image builds line by line, top to bottom |
+
+### `ea 09` / `ea 0a` — Graffiti Activation [CONFIRMED]
+
+```
+ea 09 00 50 01        (static graffiti, type "c", cache byte 0x00)
+ea 0a 00 50 01        (graffiti animation, type "d", cache byte 0x02)
+```
+
+Fixed payload. ACK: `15 ea 24 00`. The `50` is likely speed and `01`
+possibly a layer count, but the app always sends these values.
+
+### `ea 11` — Direct Draw [CONFIRMED]
+
+```
+ea 11 00 00 00 [len] [a2pl stream]
+```
+
+Immediate framebuffer update without a content upload. Used by the app's
+live graffiti mode while the user draws (trace 60: 15 draws, one pixel
+added at a time).
+
+| Byte | Meaning |
+|------|---------|
+| `ea 11` | Command |
+| `00 00 00` | Fixed prefix |
+| `len` | Payload length in bytes (observed 24–44; 255 max as a 1-byte field) |
+| payload | **Raw a2pl stream of the full 3072-byte framebuffer** |
+
+Key properties (verified by decompressing all trace-60 draws):
+
+- No 6-byte header and no offset table — the payload starts directly
+  with the first a2pl command byte and decompresses to exactly 3072 bytes.
+- Every draw replaces the **entire** canvas. The app accumulates pixels
+  client-side and re-sends the full framebuffer on each stroke; there is
+  no incremental pixel command.
+- Colors are the standard 16-bit HSV encoding (see HSV Color Encoding).
+- No ACK.
+- The payload must end with trailing literal bytes (the same firmware
+  off-by-one bug as uploads — see [A2PL.md](A2PL.md#stream-ending)).
 
 ### `ea 10` — Clock [CONFIRMED]
 
@@ -444,6 +484,30 @@ preceding frames.
 
 **GIF payload** (`amt_fmt: 2`): No header or offset table. The payload is the
 raw GIF file bytes. The device decodes GIF natively.
+
+### GIF Device Limitations [CONFIRMED — crash-tested]
+
+The device's GIF decoder is fragile. GIFs outside the app's envelope crash
+the firmware (complete freeze, missing init responses, reboot cycle after
+~2 min). Verified safe envelope (matching the app's own GIFs, e.g. trace 04):
+
+| Property | Safe value | Crashes at |
+|----------|-----------|------------|
+| Color table | **Single global table** (128 or 256 entries) | Local color tables in image blocks |
+| Frame delay | **≥ 100 ms** (6–10 fps) | 60–90 ms delays (11–16 fps) — wedges render loop |
+| Frame count | **~60 frames** max observed safe | (not exhaustively tested) |
+| Size | **≤ 52 KB** observed safe; 60–98 KB with other violations crashed | combined with the above |
+
+Crash characteristics: upload *completes* and the content hash is cached,
+then the device stops answering (only one `ea 81` during init, incomplete
+GATT service discovery) and reboots after ~2 minutes. Recovery: physical
+power cycle, or wait out the reboot.
+
+Also avoid: reconnecting over BLE while a GIF is playing — this independently
+triggers the same wedge. The app never reconnects mid-playback.
+
+`e0 32` segments themselves need no pacing (the app writes back-to-back,
+median 0.4 ms gaps, and a 107-segment upload is fine).
 
 ### JSON Metadata
 

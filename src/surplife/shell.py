@@ -33,6 +33,11 @@ class Shell:
         self._active: int = -1
         # Last content hash uploaded per display, for "playlist-add last".
         self._last_hash: dict[SurplifeDisplay, bytes] = {}
+        # Per-device graffiti canvas: {(col, row): (r, g, b) | None}.
+        self._canvases: dict[SurplifeDisplay,
+                             dict[tuple[int, int],
+                                  tuple[int, int, int] | None]] = {}
+        self._draw_color: tuple[int, int, int] = (255, 0, 0)
 
     @property
     def active(self) -> SurplifeDisplay | None:
@@ -131,6 +136,8 @@ class Shell:
         elif cmd in ("connect", "select"):
             names = [n + " " for n in self._names if n.lower().startswith(text.lower())]
             return names
+        elif cmd == "draw":
+            return []
         else:
             return self._complete_path(text)
 
@@ -167,6 +174,11 @@ class Shell:
             "image": self._cmd_image,
             "text": self._cmd_text,
             "gif": self._cmd_gif,
+            "draw": self._cmd_draw,
+            "draw-clear": self._cmd_draw_clear,
+            "draw-off": self._cmd_draw_off,
+            "graffiti": self._cmd_graffiti,
+            "graffiti-gif": self._cmd_graffiti_gif,
             "playlist": self._cmd_playlist,
             "playlist-add": self._cmd_playlist_add,
             "playlist-rm": self._cmd_playlist_rm,
@@ -366,6 +378,63 @@ class Shell:
                     raise ShellError(f"Unknown option: {arg}")
         c_hash = await self._upload(lambda d: d.show_gif_file(
             path, speed=speed, force=force))
+        print(f"hash={c_hash.hex()}")
+
+    async def _cmd_draw(self, args: list[str]) -> None:
+        """draw X,Y [color|off] — Add a pixel to the graffiti canvas and direct-draw it"""
+        if len(args) < 1:
+            raise ShellError(
+                "Usage: draw X,Y [color]  (e.g. draw 5,3 ff0000)\n"
+                "  color: hex RGB (default: last color or ff0000)\n"
+                "  'off' erases the pixel. Canvas persists until draw-clear.")
+        try:
+            x_s, y_s = args[0].split(",", 1)
+            x, y = int(x_s), int(y_s)
+        except ValueError:
+            raise ShellError(f"Invalid position '{args[0]}' — expected X,Y")
+        from .color import parse_rgb_hex
+        if len(args) >= 2 and args[1].lower() != "off":
+            self._draw_color = parse_rgb_hex(args[1])
+        rgb = None if (len(args) >= 2 and args[1].lower() == "off") \
+            else self._draw_color
+        d = self._require_active()
+        canvas = self._canvases.setdefault(d, {})
+        canvas[(x, y)] = rgb
+        await d.draw_pixels(canvas)
+        print(f"drew ({x}, {y}) — {len(canvas)} pixel(s)")
+
+    async def _cmd_draw_clear(self, args: list[str]) -> None:
+        """draw-clear — Wipe the graffiti canvas and the display"""
+        d = self._require_active()
+        self._canvases[d] = {}
+        await d.draw_pixels({})
+        print("Canvas cleared.")
+
+    async def _cmd_draw_off(self, args: list[str]) -> None:
+        """draw-off — Blank the display (all-black direct draw)"""
+        d = self._require_active()
+        self._canvases[d] = {}
+        await d.draw_pixels({}, clear=True)
+        print("Display blanked.")
+
+    async def _cmd_graffiti(self, args: list[str]) -> None:
+        """graffiti <file> [force] — Upload image as static graffiti (type c)"""
+        if not args:
+            raise ShellError("Usage: graffiti <file> [force]")
+        path = args[0]
+        force = "force" in args[1:]
+        c_hash = await self._upload(lambda d: d.show_graffiti_file(
+            path, force=force))
+        print(f"hash={c_hash.hex()}")
+
+    async def _cmd_graffiti_gif(self, args: list[str]) -> None:
+        """graffiti-gif <file> [force] — Upload GIF as graffiti animation (type d)"""
+        if not args:
+            raise ShellError("Usage: graffiti-gif <file> [force]")
+        path = args[0]
+        force = "force" in args[1:]
+        c_hash = await self._upload(lambda d: d.show_graffiti_gif_file(
+            path, force=force))
         print(f"hash={c_hash.hex()}")
 
     async def _cmd_playlist(self, _args: list[str]) -> None:

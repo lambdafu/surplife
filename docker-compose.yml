@@ -1,0 +1,30 @@
+# BLE passthrough to the host's BlueZ stack — Linux only.
+#
+# The container talks to the HOST's bluetoothd over the system D-Bus
+# socket, so bluetoothctl/BlueZ must be running on the host and the
+# user must be in the `bluetooth` group (or run as root).
+#
+# Docker Desktop (macOS/Windows) cannot reach the host's Bluetooth
+# adapter this way — use a Linux host.
+#
+# Usage:
+#   docker compose build
+#   docker compose run --rm surplife scan
+#   docker compose run --rm surplife -d D98 brightness 80
+#   docker compose run --rm surplife shell
+#   docker compose run --rm surplife -d D98 pixel 5,3 9,5 -c ff0000
+
+services:
+  surplife:
+    build: .
+    image: surplife:latest
+    network_mode: host          # BLE advertising data / L2CAP need host netns
+    pid: host
+    volumes:
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro
+    environment:
+      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+    # The interactive shell needs stdin.
+    stdin_open: true
+    tty: true
+    restart: "no"

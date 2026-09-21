@@ -1,0 +1,31 @@
+target-version = "py311"
+line-length = 100
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF", "DTZ", "ISC", "ASYNC", "S"]
+ignore = [
+    "DTZ005", "DTZ007",  # device clock intentionally uses local wall time
+    "BLE001",            # broad except at session boundaries is intentional
+    "S110",              # try-except-pass on cleanup paths
+    "S311", "S324",      # random/MD5: device-defined protocol, not security
+    "S108",              # /tmp usage in test tooling
+    "B904",              # raise without from: user-facing error translation
+    "B905",              # zip strict: not needed for fixed-size protocol data
+    "PLC0415",           # lazy imports (HA conventions)
+    "PLR2004",           # protocol magic values
+    "ASYNC109",          # explicit timeouts on transport methods
+]
+
+[lint.per-file-ignores]
+"src/surplife/display.py" = ["RUF059", "PYI034", "ASYNC230"]
+"src/surplife/cli.py" = ["ASYNC230", "E501"]
+"src/surplife/shell.py" = ["ASYNC230", "E501"]
+"custom_components/surplife_matrix/light.py" = ["RUF012"]
+"custom_components/surplife_matrix/services.py" = ["RUF059", "ASYNC230"]
+"custom_components/surplife_matrix/runtime.py" = ["ASYNC230"]
+"tests/test_ha_runtime.py" = ["E402", "E501"]
+"tests/test_bundled_animations.py" = ["E402"]
+"scripts/*" = ["E402", "E501", "F841", "I001"]
+"research/*" = ["ALL"]
+"research/test_device_matrix.py" = ["S101", "ASYNC230", "E501", "RUF", "F841"]
+"tests/*" = ["E501", "B904", "S101", "DTZ005", "PLR", "SLF", "ANN", "RUF", "F841", "DTZ001"]

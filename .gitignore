@@ -6,3 +6,4 @@ build/
 .venv/
 .claude/
 .DS_Store
+.coverage

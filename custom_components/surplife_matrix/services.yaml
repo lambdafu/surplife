@@ -1,0 +1,248 @@
+show_media:
+  name: Show media
+  description: Upload and display an image or GIF on the Surplife matrix.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    source:
+      name: Source
+      description: >
+        Bundled animation (builtin:<name>, e.g. builtin:plasma), media path
+        (/media/local/...), http(s) URL, or data: URI
+      required: true
+      example: builtin:rainbow_wave
+    media_type:
+      name: Media type
+      description: auto detects image vs GIF
+      required: false
+      default: auto
+      selector:
+        select:
+          options:
+            - auto
+            - image
+            - gif
+    effect:
+      name: Effect
+      description: Display effect for static images (1=static .. 10=wipe)
+      required: false
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 10
+    speed:
+      name: Speed
+      description: Animation speed 1-100
+      required: false
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+    graffiti:
+      name: Graffiti mode
+      description: Upload into the device's graffiti category
+      required: false
+      default: false
+      selector:
+        boolean:
+    add_to_playlist:
+      name: Add to playlist
+      description: Seconds per rotation to also add this content to the carousel
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 255
+
+show_camera:
+  name: Show camera
+  description: Show a still frame from a Home Assistant camera on the matrix.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    camera_entity:
+      name: Camera
+      description: Camera to take the snapshot from
+      required: true
+      selector:
+        entity:
+          domain: camera
+    graffiti:
+      name: Graffiti mode
+      description: Cache under the graffiti category
+      required: false
+      default: false
+      selector:
+        boolean:
+
+show_text:
+  name: Show text
+  description: Display scrolling text with solid color or gradient.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    message:
+      name: Message
+      required: true
+      selector:
+        text:
+    colors:
+      name: Colors
+      description: Colors as hex RGB or templates, single = solid, multiple = gradient
+      required: false
+      selector:
+        object:
+    speed:
+      name: Speed
+      required: false
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+
+show_clock:
+  name: Show clock
+  description: Show the firmware-rendered clock.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    style:
+      name: Style
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 7
+    "12h":
+      name: 12-hour format
+      required: false
+      default: false
+      selector:
+        boolean:
+    date:
+      name: Show date
+      required: false
+      default: false
+      selector:
+        boolean:
+
+draw_pixels:
+  name: Draw pixels
+  description: Direct-draw pixels immediately (replaces the whole display).
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    pixels:
+      name: Pixels
+      description: List of {x, y, color} — color omitted erases the pixel
+      required: true
+      selector:
+        object:
+        # e.g. [{x: 5, y: 3, color: "ff0000"}]
+
+playlist_add:
+  name: Playlist add
+  description: Add uploaded content (by hash) to the device carousel.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    content_hash:
+      name: Content hash
+      required: true
+      selector:
+        text:
+    duration:
+      name: Duration
+      description: Display time in seconds
+      required: false
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 255
+
+playlist_remove:
+  name: Playlist remove
+  description: Remove content (by hash) from the device carousel.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    content_hash:
+      name: Content hash
+      required: true
+      selector:
+        text:
+
+playlist_clear:
+  name: Playlist clear
+  description: Remove all entries from the device carousel.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+
+set_speed:
+  name: Set speed
+  description: Set the GIF animation speed (GIF content only).
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    speed:
+      name: Speed
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 100
+activate:
+  name: Activate content
+  description: >
+    Re-display previously uploaded content by hash. A cache hit needs no
+    upload at all — the instant building block for scene automations.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    content_hash:
+      name: Content hash
+      description: 32-hex-digit content hash returned by any upload service
+      required: true
+      selector:
+        text:
+    speed:
+      name: Speed
+      description: Animation speed 1-100 (image/GIF content only)
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 100
+    effect:
+      name: Effect
+      description: Display effect for static images (1=static .. 10=wipe)
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 10

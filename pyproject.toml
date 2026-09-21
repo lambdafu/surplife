@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "surplife"
-version = "0.1.0"
+version = "0.2.0"
 description = "Control library for Surplife LED matrix displays over BLE"
 readme = "README.md"
 license = "MIT"
@@ -19,5 +19,6 @@ dependencies = [
 surplife = "surplife.cli:cli"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/surplife"]
-artifacts = ["src/surplife/fonts/*.otf", "src/surplife/fonts/LICENSE.spleen"]
+packages = ["src/surplife", "src/surplife_core"]
+artifacts = ["src/surplife/fonts/*.otf", "src/surplife/fonts/LICENSE.spleen",
+             "src/surplife_core/fonts/*.otf", "src/surplife_core/fonts/LICENSE.spleen"]

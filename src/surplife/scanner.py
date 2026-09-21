@@ -157,7 +157,7 @@ async def _find_first(
     await scanner.start()
     try:
         return await asyncio.wait_for(found, timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise RuntimeError(f"{description} not found (scanned {timeout:.0f}s)")
     finally:
         await scanner.stop()

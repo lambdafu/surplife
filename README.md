@@ -174,6 +174,73 @@ Work in progress. Currently implemented:
 - Direct pixel drawing (`ea 11` live draw, stateless CLI / per-device canvas in shell)
 - Waveform (audio visualizer) style configuration and streaming (experimental, shell only)
 
+## Home Assistant integration
+
+A HACS-installable integration (`custom_components/surplife_matrix/`) controls
+the display inside Home Assistant using HA's shared Bluetooth stack. It
+provides a light entity (power/brightness) plus services:
+
+```
+surplife_matrix.show_media   — upload an image/GIF from /media, a URL, or data: URI
+surplife_matrix.show_camera  — show a frame from any HA camera
+surplife_matrix.show_text    — scrolling text (solid or gradient colors)
+surplife_matrix.show_clock   — firmware clock (styles, 12h/24h, date)
+surplife_matrix.draw_pixels  — direct-draw pixels (ea 11)
+surplife_matrix.playlist_add/remove/clear — device carousel management
+surplife_matrix.set_speed    — GIF speed
+surplife_matrix.activate     — re-display cached content by hash (instant, no upload)
+```
+
+Unsafe GIFs are auto-converted into the device-safe envelope (single global
+palette, >=100ms frame delay) before upload.
+
+**Architecture (wedge-safe by design):** the integration holds one
+**persistent, always-connected BLE session** per device — the device firmware
+wedges after ~6–7 connect cycles (see the device wedge warning below), so
+commands are never re-connected per action. All traffic is serialized through
+a command lock (interleaved uploads would corrupt the device's segment
+reassembly), state comes from command ACKs instead of polling, and GIF
+uploads observe a 3 s post-activation dwell. A watchdog detects the wedge
+signature and marks the entity unavailable until the display is power-cycled.
+See [PROTOCOL.md "BLE Connect-Cycle Limitation"](PROTOCOL.md#ble-connect-cycle-limitation--confirmed--crash-tested)
+and ["Cache Check Semantics"](PROTOCOL.md#cache-check-semantics--confirmed--live-verified).
+See `hacs.json` for the
+repository layout; the vendored protocol core in
+`custom_components/surplife_matrix/core/` is synced from `src/surplife_core`
+via `scripts/sync_core.sh`.
+
+## Shipped animations
+
+The repo and the HA integration ship a curated set of **device-safe**
+animations (every file passes `validate_gif()`; produced by
+`scripts/generate_animations.py`, which pushes each one through the
+auto-fix pipeline and asserts the safe envelope):
+
+| `builtin:` name | Visual |
+|---|---|
+| `rainbow_wave` | hue-drift rainbow with a soft vertical brightness wave |
+| `plasma` | additive sine plasma, warm-cool palette |
+| `fire` | bottom-up flickering flames |
+| `ocean` | layered sine waves, blue-teal palette |
+| `starfield` | twinkling stars drifting on black |
+| `police_light` | alternating red/blue sweep |
+| `color_cycle`, `scroll_text`, `d20_flames`, `popcorn2`, `spaceship`, `wizard_fireball` | device-safe copies of the original assets |
+
+Use them in the Home Assistant integration without any setup —
+`show_media` accepts a `builtin:` source:
+
+```
+service: surplife_matrix.show_media
+data:
+  entity_id: light.surplife_matrix
+  source: builtin:rainbow_wave
+```
+
+To regenerate (or add) animations: `python3 scripts/generate_animations.py`
+(writes to `assets/animations/` and the integration's `animations/` folder;
+`--list` shows the available generators). A committed test asserts every
+bundled GIF stays device-safe.
+
 ## Device-safe GIFs
 
 The device's GIF decoder is fragile — see
@@ -192,6 +259,17 @@ print(report)   # {'ok': True, 'frames': 64, ...} or violation list
 To render arbitrary RGB animations safely, quantize all frames against a
 single shared 128-color palette, use a frame delay of 150 ms, and verify
 with `validate_gif()` before upload.
+
+## Device wedge warning
+
+The device firmware leaks a resource per BLE connection: after **~6–7 connect
+cycles since boot** it wedges (panel freezes, init handshake never completes)
+and only recovers with a **manual power cycle**. Session *duration* and
+in-session command count are safe — batch commands into one session and never
+poll by connecting. See
+[PROTOCOL.md "BLE Connect-Cycle Limitation"](PROTOCOL.md#ble-connect-cycle-limitation--confirmed--crash-tested).
+The CLI and the Home Assistant integration already follow this pattern
+(single session per invocation / persistent connection respectively).
 
 ## Docker
 
@@ -220,7 +298,8 @@ docker compose run --rm surplife -d D98 pixel 5,3 9,5 -c ff0000
 BTSnoop HCI captures (`research/traces/`), the trace analysis and capture parsing
 scripts, the a2pl decompressor test suite, notes on the APK decompilation, the
 graffiti direct-draw replay test (`research/test_graffiti_replay.py`), and the
-original monolithic `surplife.py` script that preceded this package.
+original monolithic `surplife.py` script that preceded this package. Core logic
+tests live in `tests/test_core.py` (pytest).
 
 ## License
 

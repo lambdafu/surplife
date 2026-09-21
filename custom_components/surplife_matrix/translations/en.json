@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Surplife Matrix",
+        "description": "Select a discovered display or enter a BLE address.",
+        "data": {
+          "address": "BLE address"
+        }
+      },
+      "confirm": {
+        "description": "Set up {name} ({address})?"
+      }
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "no_devices_found": "No Surplife matrix displays found in range"
+    },
+    "error": {
+      "invalid_address": "Not a valid BLE address (expect AA:BB:CC:DD:EE:FF)"
+    }
+  },
+  "services": {
+    "activate": {
+      "name": "Activate content",
+      "description": "Re-display previously uploaded content by hash (cache hit = instant, no upload)."
+    }
+  }
+}

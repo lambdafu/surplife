@@ -8,4 +8,4 @@ Display: 96 columns x 16 rows, 2 bytes/pixel (16-bit HSV), column-major.
 Pixel data uses a2pl compression (LZ77 variant).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

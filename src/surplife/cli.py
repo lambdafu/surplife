@@ -10,7 +10,6 @@ import click
 from . import __version__
 from .color import parse_rgb_hex
 from .display import PLAYLIST_DEFAULT_DURATION, SurplifeDisplay
-from .scanner import discover
 
 
 @click.group(invoke_without_command=True)

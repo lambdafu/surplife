@@ -105,7 +105,7 @@ The device decodes GIF natively. No header prefix.
 
 | Command | ACK | Function |
 |---------|-----|----------|
-| `ea 05 [cache_byte] [16B hash]` | `15 ea 05 00` (new) / `01` (cached) | Cache check |
+| `ea 05 [cache_byte] [16B hash]` | `15 ea 05 00` (new) / `01` (cached) | Cache check (type byte ignored — see Cache Check Semantics) |
 | `ea 06 [source] [speed] [effect]` | `15 ea 24 00` | Activate image with effect (type "a") |
 | `ea 07 00 [speed]` | — | Activate GIF + set speed (type "b") |
 | `ea 09 00 50 01` | `15 ea 24 00` | Activate graffiti (type "c") |
@@ -123,7 +123,12 @@ The device decodes GIF natively. No header prefix.
 **Note on `ea 07`:** While documented as "Activate GIF + set speed," sending
 `ea 07` to non-GIF content has side effects: scrolling text switches to blinking,
 scrolling images become static. Speed for text and images is set during upload
-(JSON metadata or `ea 06` activation command).
+(JSON metadata or `ea 06` activation command). Similar mismatches exist for
+other cross-type activations: `ea 24` (text activation) is a no-op on GIF
+content, and `ea 0a` (graffiti-animation activation) on text has side effects.
+When activating content of unknown type (e.g. uploaded via the phone app), try
+activations from safest to most side-effect-prone: `ea 24`, `ea 0a`, `ea 06`,
+`ea 07`, `ea 09` — one attempt only, then re-probe on the next command cycle.
 
 ### `ea 06` — Image Activation with Effects [CONFIRMED]
 
@@ -140,6 +145,26 @@ ea 06 [source] [speed] [effect_id]
 Can also be sent standalone (without uploading) to change the effect on
 an already-cached image. Use `ea 05` first to confirm cache hit (`01`),
 then `ea 06 01 [speed] [effect]`.
+
+### Cache Check Semantics [CONFIRMED — live-verified]
+
+The `ea 05` cache check **ignores the type byte** — only the 16-byte
+content hash matters. Verified live: the same content hash answered
+`01` (cached) under type bytes `0x04`, `0x01`, and `0x02`.
+
+Implications:
+
+- One probe is enough to learn whether content is cached; no need to
+  probe per type.
+- The type byte cannot be used to *learn* the content's type. To pick
+  the correct activation command (image vs GIF vs text vs graffiti),
+  the controlling side must remember the type it uploaded itself, or
+  fall back to documented activations for foreign content (phone app):
+  safest first — `ea 24` is a no-op on GIF content, whereas `ea 0a` on
+  text has documented side effects (see the `ea 07` note below).
+- The type byte in the *upload* sequence (`ea 05` before `e0 30`) and
+  the content-type table above still describe what the app sends; the
+  device just does not key its cache on it.
 
 **App effects (accessible in UI):**
 
@@ -408,6 +433,15 @@ All content uploads follow the same pattern:
 6. [activation command]            → type-specific activation
 ```
 
+**Partial-upload abort behavior:** if the transport breaks mid-upload
+(segments lost, connection dropped), the device keeps the partial blob in
+its upload buffer. Activating that content can fail, and the next complete
+upload replaces it. If the end marker (`e0 33`) is never acknowledged, the
+content is incomplete on the device — do not activate cached content from
+that upload. After activation, GIF playback needs a brief settle (~3 s
+verified live) before further traffic on the connection while the first
+frames start playing.
+
 ### Content Blob Structure
 
 The content uploaded via `e0 32` segments is a single blob with this layout:
@@ -504,10 +538,53 @@ GATT service discovery) and reboots after ~2 minutes. Recovery: physical
 power cycle, or wait out the reboot.
 
 Also avoid: reconnecting over BLE while a GIF is playing — this independently
-triggers the same wedge. The app never reconnects mid-playback.
+triggers the same wedge. The app never reconnects mid-playback. See the
+[BLE Connect-Cycle Limitation](#ble-connect-cycle-limitation--confirmed--crash-tested)
+below for the root cause and integration guidance.
 
 `e0 32` segments themselves need no pacing (the app writes back-to-back,
 median 0.4 ms gaps, and a 107-segment upload is fine).
+
+### BLE Connect-Cycle Limitation [CONFIRMED — crash-tested]
+
+The firmware leaks a resource (suspected RAM) per BLE connection. After
+**~6–7 connect cycles since boot**, the device wedges — regardless of what
+the sessions did:
+
+| Observed | Value |
+|----------|-------|
+| Connect cycles tolerated per boot | ~6–7 |
+| Wedge signature | Panel freezes on the last visual; device still advertises (`IOTBT*`) but init never completes (single `15 ea 81`, second `16 ea 81` never arrives, GATT service discovery incomplete) |
+| Self-recovery | **None** — manual power cycle required |
+| Recovery window | ~2 min dark after power cycle before advertising resumes |
+| Depends on content? | No — read-only sessions (brightness) wedge identically |
+| Depends on session duration? | **No** — 15+ commands over one connection are fine (trace 60; the app's own pattern) |
+| Depends on in-session command count? | No — 10+ commands per session verified safe |
+
+Wedge trigger matrix (all reproduced live):
+
+- 7th connect after boot, even with 15–60 s idle gaps between sessions
+- Connecting while a GIF plays (independent trigger, see above)
+
+**Implications for integration/control authors:**
+
+- **Batch all commands into one session.** One session ≈ one user action.
+  A long-lived, always-connected session is safe and is exactly what the
+  official app does.
+- **Never poll by connecting.** A 60 s status poll wedges the device within
+  minutes. Maintain state from command ACKs (`e0 01` responses carry
+  power/brightness/speed) and keep the connection open.
+- After a wedge: the device must be power-cycled manually. Hammering a
+  wedged device with reconnect attempts extends the wedge — back off and
+  warn the user instead.
+
+**Concurrent commands:** a single connection carries strictly serialized
+commands. The device reassembles `e0 32` upload chunks by segment index into
+ONE blob — two interleaved uploads corrupt each other's data. Any concurrent
+command pair also races the request/response matching (both sides match the
+first notification that arrives). Control implementations must hold a command
+lock around every write/await sequence on a shared connection; a command only
+"ends" once its final ACK (or the response timeout) has been processed.
 
 ### JSON Metadata
 

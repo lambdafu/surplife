@@ -1,0 +1,24 @@
+{
+  "domain": "surplife_matrix",
+  "name": "Surplife Matrix",
+  "version": "0.2.0",
+  "codeowners": [
+    "@lambdafu"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "bluetooth_adapters"
+  ],
+  "documentation": "https://github.com/lambdafu/surplife",
+  "issue_tracker": "https://github.com/lambdafu/surplife/issues",
+  "iot_class": "local_push",
+  "requirements": [
+    "bleak-retry-connector>=3.8.0"
+  ],
+  "bluetooth": [
+    {
+      "local_name": "IOTBT*",
+      "connectable": true
+    }
+  ]
+}

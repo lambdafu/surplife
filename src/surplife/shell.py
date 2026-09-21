@@ -6,8 +6,8 @@ import asyncio
 import glob
 import os
 import readline
-import signal
 import shlex
+import signal
 import time
 
 from .display import PLAYLIST_DEFAULT_DURATION, SurplifeDisplay

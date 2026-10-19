@@ -11,13 +11,15 @@ import logging
 
 from homeassistant.components.light import (
     ColorMode,
+    LightEntity,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import SurplifeCoordinatorEntity
-from .runtime import SurplifeRuntime
+from .runtime import DeviceNotFoundError, SurplifeRuntime, WedgedError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,12 +36,13 @@ async def async_setup_entry(
     async_add_entities([SurplifeMatrixLight(runtime)])
 
 
-class SurplifeMatrixLight(SurplifeCoordinatorEntity):
+class SurplifeMatrixLight(SurplifeCoordinatorEntity, LightEntity):
     """Power and brightness control of the LED matrix."""
 
     _attr_has_entity_name = True
     _attr_name = None
     _attr_supported_color_modes = {ColorMode.WHITE}
+    _attr_color_mode = ColorMode.WHITE
     _attr_assumed_state = True   # state comes from command ACKs, not polling
 
     @property
@@ -50,6 +53,7 @@ class SurplifeMatrixLight(SurplifeCoordinatorEntity):
         """Register entity_id → entry for service targeting."""
         from .const import DOMAIN
 
+        await super().async_added_to_hass()
         self.hass.data[DOMAIN].setdefault("entities", {})
         self.hass.data[DOMAIN]["entities"][self.entity_id] = \
             self._runtime.entry.entry_id
@@ -80,13 +84,20 @@ class SurplifeMatrixLight(SurplifeCoordinatorEntity):
             else:
                 await conn.power(True, self._runtime.apply_status)
 
-        await self._runtime.connection.command(_run)
+        await self._async_command(_run)
 
     async def async_turn_off(self, **kwargs) -> None:
         async def _run(_client, conn):
             await conn.power(False, self._runtime.apply_status)
 
-        await self._runtime.connection.command(_run)
+        await self._async_command(_run)
+
+    async def _async_command(self, action) -> None:
+        """Run a command, surfacing BLE failures as clean HA errors."""
+        try:
+            await self._runtime.connection.command(action)
+        except (DeviceNotFoundError, WedgedError) as err:
+            raise HomeAssistantError(str(err)) from err
 
 
 def _status(runtime: SurplifeRuntime) -> dict:

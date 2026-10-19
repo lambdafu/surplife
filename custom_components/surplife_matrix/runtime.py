@@ -70,6 +70,10 @@ class WedgedError(Exception):
     """The device is presumed firmware-wedged (needs manual power cycle)."""
 
 
+class DeviceNotFoundError(Exception):
+    """The device is not advertising, so no BLE connection is possible."""
+
+
 class PersistentConnection:
     """Long-lived BLE session with auto-reconnect and a wedge watchdog.
 
@@ -127,7 +131,9 @@ class PersistentConnection:
                 device = async_ble_device_from_address(
                     self._runtime.hass, address, connectable=True)
             if device is None:
-                raise RuntimeError(f"Device {address} not in BLE range")
+                raise DeviceNotFoundError(
+                    f"Device {address} not in BLE range (powered off, out of "
+                    "range, or connected to another app)")
             _LOGGER.debug("Connecting to %s", address)
             try:
                 client = await establish_connection(
@@ -157,9 +163,8 @@ class PersistentConnection:
             try:
                 await conn.init(self._runtime.apply_status)
             except TimeoutError:
-                # init timeout on a fresh connect: count toward the wedge
-                # watchdog and drop the half-open client
-                self._consecutive_timeouts += 1
+                # init timeout on a fresh connect: drop the half-open client;
+                # the command layer counts the timeout toward the watchdog
                 await self._disconnect_client()
                 raise
             self._client = client
@@ -201,6 +206,10 @@ class PersistentConnection:
         try:
             client, conn = await self.ensure_connected()
         except WedgedError:
+            raise
+        except DeviceNotFoundError:
+            # Off, out of range, or connected elsewhere: not a firmware
+            # wedge, so do not count it toward the watchdog or back off.
             raise
         except Exception as err:
             # reconnect path failed; back off before the next attempt
@@ -332,6 +341,7 @@ def address_suffix(address: str) -> str:
 
 
 __all__ = [
+    "DeviceNotFoundError",
     "PersistentConnection",
     "SurplifeRuntime",
     "TransportAdapter",

@@ -340,6 +340,21 @@ def test_watchdog_cooldown_expires():
     asyncio.run(scenario())
 
 
+def test_device_not_found_does_not_wedge(monkeypatch):
+    """A missing advertisement is not a firmware wedge and must not lock out."""
+    runtime, _client = _make_runtime([])
+    monkeypatch.setattr(
+        rt, "async_ble_device_from_address", lambda *a, **k: None)
+
+    async def scenario():
+        for _ in range(3):
+            with pytest.raises(rt.DeviceNotFoundError):
+                await runtime.connection.command(lambda _c, _n: None)
+        assert not runtime.connection.wedged
+
+    asyncio.run(scenario())
+
+
 def test_successful_command_resets_timeout_streak():
     """One success between failures keeps the device out of the wedge state."""
     responses = [

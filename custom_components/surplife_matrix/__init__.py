@@ -43,8 +43,9 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_setup(hass: HomeAssistant, config) -> None:
+async def async_setup(hass: HomeAssistant, config) -> bool:
     """Register content services once (domain-level, not per entry)."""
     from .services import async_setup_services
 
     await async_setup_services(hass)
+    return True

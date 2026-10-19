@@ -21,7 +21,7 @@ import pytest
 
 _bluetooth = types.ModuleType("homeassistant.components.bluetooth")
 _bluetooth.async_get_scanner = lambda hass: None
-_bluetooth.async_last_service_info = lambda *a, **k: None
+_bluetooth.async_ble_device_from_address = lambda *a, **k: object()
 
 _config_entries = types.ModuleType("homeassistant.config_entries")
 _config_entries.ConfigEntry = type("ConfigEntry", (), {})

@@ -33,7 +33,7 @@ class SurplifeMatrixConfigFlow(ConfigFlow, domain=DOMAIN):
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> ConfigFlowResult:
         """Handle a device discovered via the bluetooth integration."""
-        await self._async_set_unique_id(discovery_info.address)
+        await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
         self.context["title_placeholders"] = {
             "name": discovery_info.name,
@@ -74,13 +74,15 @@ class SurplifeMatrixConfigFlow(ConfigFlow, domain=DOMAIN):
             match = next((i for i in infos
                           if i.address.upper() == address), None)
             if match is not None:
+                await self.async_set_unique_id(match.address)
+                self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=match.name,
                     data={CONF_ADDRESS: match.address},
                 )
             # Manual entry: accept any address the user provides
             if len(address) == 17 and address.count(":") == 5:
-                await self._async_set_unique_id(address)
+                await self.async_set_unique_id(address)
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
                     title=address,

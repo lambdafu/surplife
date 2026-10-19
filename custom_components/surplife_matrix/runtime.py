@@ -27,7 +27,10 @@ from bleak_retry_connector import (
     BleakClientWithServiceCache,
     establish_connection,
 )
-from homeassistant.components.bluetooth import async_get_scanner
+from homeassistant.components.bluetooth import (
+    async_ble_device_from_address,
+    async_get_scanner,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -117,11 +120,19 @@ class PersistentConnection:
 
             scanner = async_get_scanner(self._runtime.hass)
             address = self._runtime.address
+            device = self._runtime.device
+            if device is None:
+                # The device may not have advertised since startup; resolve
+                # it from the Bluetooth cache now (or fail this attempt).
+                device = async_ble_device_from_address(
+                    self._runtime.hass, address, connectable=True)
+            if device is None:
+                raise RuntimeError(f"Device {address} not in BLE range")
             _LOGGER.debug("Connecting to %s", address)
             try:
                 client = await establish_connection(
                     BleakClientWithServiceCache,
-                    self._runtime.device,
+                    device,
                     address,
                     max_attempts=3,
                     scanner=scanner,
@@ -271,14 +282,17 @@ class SurplifeRuntime:
         self.coordinator.async_set_updated_data(dict(self.status))
 
     def async_setup(self) -> None:
-        """Resolve the BLEDevice from the HA bluetooth integration."""
-        from homeassistant.components.bluetooth import async_last_service_info
+        """Resolve the BLEDevice from the HA bluetooth integration.
 
-        service_info = async_last_service_info(self.hass, self.address,
-                                               connectable=True)
-        if service_info is None:
-            raise RuntimeError(f"Device {self.address} not in BLE range")
-        self._device = service_info.device
+        Best effort: after an HA restart the display may not have
+        advertised yet, so resolution is retried lazily on connect.
+        """
+        self._device = async_ble_device_from_address(
+            self.hass, self.address, connectable=True)
+        if self._device is None:
+            _LOGGER.debug(
+                "Device %s not in the Bluetooth cache yet; will resolve "
+                "on first connect", self.address)
 
     async def async_close(self) -> None:
         await self.connection.close()

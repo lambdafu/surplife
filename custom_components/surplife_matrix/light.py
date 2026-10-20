@@ -41,8 +41,13 @@ class SurplifeMatrixLight(SurplifeCoordinatorEntity, LightEntity):
 
     _attr_has_entity_name = True
     _attr_name = None
-    _attr_supported_color_modes = {ColorMode.WHITE}
-    _attr_color_mode = ColorMode.WHITE
+    # The panel is single-colour but dimmable, so BRIGHTNESS is the only
+    # valid mode here. HA rejects ColorMode.WHITE as a sole mode
+    # (see homeassistant/components/light/helper.py
+    # valid_supported_color_modes), which would make it refuse the
+    # entity and leave the device without a light entity.
+    _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
+    _attr_color_mode = ColorMode.BRIGHTNESS
     _attr_assumed_state = True   # state comes from command ACKs, not polling
 
     @property

@@ -13,6 +13,7 @@ This module stubs the HA light module (including a faithful copy of
 HA's validation rule) so the entity's declared modes are checked
 without a real Home Assistant installation.
 """
+import asyncio
 import importlib.util as _ilu
 import os
 import sys
@@ -82,9 +83,18 @@ class _LightEntity:
     _attr_brightness = None
 
 
+class _LightEntityFeature:
+    """Stand-in for HA's LightEntityFeature IntFlag."""
+
+    EFFECT = 4
+    FLASH = 8
+    TRANSITION = 32
+
+
 _light_mod = types.ModuleType("homeassistant.components.light")
 _light_mod.ColorMode = ColorMode
 _light_mod.LightEntity = _LightEntity
+_light_mod.LightEntityFeature = _LightEntityFeature
 _light_mod.valid_supported_color_modes = valid_supported_color_modes
 
 _bluetooth = types.ModuleType("homeassistant.components.bluetooth")
@@ -98,6 +108,8 @@ _core = types.ModuleType("homeassistant.core")
 _core.HomeAssistant = type("HomeAssistant", (), {})
 _core.ServiceCall = type("ServiceCall", (), {})
 _core.callback = lambda f: f
+_core.SupportsResponse = type("SupportsResponse", (), {
+    "NONE": 0, "OPTIONAL": 1, "ONLY": 2})
 
 _uc = types.ModuleType("homeassistant.helpers.update_coordinator")
 
@@ -133,6 +145,7 @@ _uc.UpdateFailed = type("UpdateFailed", (Exception,), {})
 
 _ex = types.ModuleType("homeassistant.exceptions")
 _ex.HomeAssistantError = type("HomeAssistantError", (Exception,), {})
+sys.modules["homeassistant.exceptions"] = _ex
 
 _ep = types.ModuleType("homeassistant.helpers.entity_platform")
 _ep.AddConfigEntryEntitiesCallback = type("AddConfigEntryEntitiesCallback", (), {})
@@ -180,6 +193,27 @@ def _load(module_name: str, filename: str):
 _load("surplife_matrix.runtime", "runtime.py")
 light_mod = _load("surplife_matrix.light", "light.py")
 
+# The real HomeAssistantError from the stubbed module.
+HomeAssistantError = _ex.HomeAssistantError
+
+
+class _FakeAnimations:
+    """Animation manager shim."""
+
+    def __init__(self, names=("plasma", "fire", "ocean")):
+        self._names = list(names)
+        self.current = None
+        self.started = []
+
+    @property
+    def names(self):
+        return list(self._names)
+
+    def start(self, name, speed=None):
+        self.started.append((name, speed))
+        self.current = name
+        return types.SimpleNamespace(name=name, state="uploading")
+
 
 class _FakeRuntime:
     """Runtime shim with just what the light entity touches."""
@@ -193,11 +227,35 @@ class _FakeRuntime:
         }
         self.coordinator = _FakeCoordinator()
         self.coordinator.data = dict(self.status)
-        self.connection = types.SimpleNamespace(wedged=False)
+        self.connection = types.SimpleNamespace(
+            wedged=False, command=self._command)
+        self.animations = _FakeAnimations()
+        self.sent = []
+
+    async def _command(self, action):
+        """Fake connection: runs the action against a stub conn."""
+        conn = _StubConn(self.sent)
+        await action(None, conn)
 
     def apply_status(self, status):
         self.status.update(status)
         self.coordinator.async_set_updated_data(dict(self.status))
+
+
+class _StubConn:
+    """Connection stub that records the commands it receives."""
+
+    def __init__(self, sent):
+        self.sent = sent
+
+    async def send(self, packet):
+        self.sent.append(packet)
+
+    async def power(self, on, cb):
+        self.sent.append(("power", on))
+
+    async def set_brightness(self, value, cb):
+        self.sent.append(("brightness", value))
 
 
 def _entity(status=None) -> "light_mod.SurplifeMatrixLight":
@@ -254,3 +312,49 @@ def test_available_false_while_wedged():
     assert entity.available is True
     entity._runtime.connection.wedged = True
     assert entity.available is False
+
+
+# ── Effects / animations ─────────────────────────────────────────────
+
+def test_effect_list_contains_device_effects_and_animations():
+    entity = _entity()
+    effects = entity._attr_effect_list
+    for name in ("static", "breathe", "wipe"):
+        assert name in effects
+    for name in ("plasma", "fire", "ocean"):
+        assert name in effects
+
+
+def test_turn_on_with_animation_starts_the_upload():
+    entity = _entity()
+    runtime = entity._runtime
+
+    async def scenario():
+        await entity.async_turn_on(effect="plasma")
+        assert runtime.animations.started == [("plasma", None)]
+        assert entity._attr_effect == "plasma"
+
+    asyncio.run(scenario())
+
+
+def test_turn_on_with_unknown_effect_raises():
+    entity = _entity()
+
+    async def scenario():
+        with pytest.raises(HomeAssistantError):
+            await entity.async_turn_on(effect="not-a-thing")
+
+    asyncio.run(scenario())
+
+
+def test_turn_on_with_device_effect_sends_ea06():
+    """A device effect re-activates the cached image with a new effect id."""
+    entity = _entity()
+    runtime = entity._runtime
+
+    async def scenario():
+        await entity._async_command(
+            lambda _c, conn: entity._run_effect(conn, "breathe"))
+        assert runtime.sent == [bytes([0xEA, 0x06, 0x01, 50, 5])]
+
+    asyncio.run(scenario())

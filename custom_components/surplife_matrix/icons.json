@@ -1,0 +1,46 @@
+{
+  "services": {
+    "show_media": {
+      "service": "mdi:image-multiple"
+    },
+    "show_animation": {
+      "service": "mdi:animation"
+    },
+    "next_animation": {
+      "service": "mdi:skip-next"
+    },
+    "previous_animation": {
+      "service": "mdi:skip-previous"
+    },
+    "show_camera": {
+      "service": "mdi:cctv"
+    },
+    "show_text": {
+      "service": "mdi:format-text"
+    },
+    "show_clock": {
+      "service": "mdi:clock-digital"
+    },
+    "draw_pixels": {
+      "service": "mdi:draw"
+    },
+    "playlist_add": {
+      "service": "mdi:playlist-plus"
+    },
+    "playlist_remove": {
+      "service": "mdi:playlist-remove"
+    },
+    "playlist_clear": {
+      "service": "mdi:playlist-remove"
+    },
+    "playlist_list": {
+      "service": "mdi:playlist-play"
+    },
+    "set_speed": {
+      "service": "mdi:speedometer"
+    },
+    "activate": {
+      "service": "mdi:play-circle"
+    }
+  }
+}

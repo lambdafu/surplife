@@ -4,7 +4,7 @@ from __future__ import annotations
 
 DOMAIN = "surplife_matrix"
 
-PLATFORMS = ["light"]
+PLATFORMS = ["light", "select"]
 
 # NOTE: no periodic status polling. The device firmware wedges after ~6-7
 # BLE connect cycles per boot (see PROTOCOL.md "BLE Connect-Cycle
@@ -31,6 +31,9 @@ GIF_ACTIVATION_DWELL_S = 3.0
 
 # Content services
 SERVICE_SHOW_MEDIA = "show_media"
+SERVICE_SHOW_ANIMATION = "show_animation"
+SERVICE_NEXT_ANIMATION = "next_animation"
+SERVICE_PREVIOUS_ANIMATION = "previous_animation"
 SERVICE_SHOW_CAMERA = "show_camera"
 SERVICE_SHOW_TEXT = "show_text"
 SERVICE_SHOW_CLOCK = "show_clock"
@@ -38,6 +41,7 @@ SERVICE_DRAW_PIXELS = "draw_pixels"
 SERVICE_PLAYLIST_ADD = "playlist_add"
 SERVICE_PLAYLIST_REMOVE = "playlist_remove"
 SERVICE_PLAYLIST_CLEAR = "playlist_clear"
+SERVICE_PLAYLIST_LIST = "playlist_list"
 SERVICE_SET_SPEED = "set_speed"
 SERVICE_ACTIVATE = "activate"
 

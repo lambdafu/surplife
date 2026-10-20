@@ -21,9 +21,197 @@
     }
   },
   "services": {
+    "show_media": {
+      "name": "Show media",
+      "description": "Upload and display an image, GIF or bundled animation.",
+      "fields": {
+        "source": {
+          "name": "Source",
+          "description": "Bundled animation, media library item, path, URL or data URI."
+        },
+        "media_type": {
+          "name": "Media type",
+          "description": "Auto detects image vs GIF."
+        },
+        "effect": {
+          "name": "Effect",
+          "description": "Display effect for static images."
+        },
+        "speed": {
+          "name": "Speed",
+          "description": "Animation speed 1-100."
+        },
+        "graffiti": {
+          "name": "Graffiti mode",
+          "description": "Upload into the device's graffiti category."
+        },
+        "add_to_playlist": {
+          "name": "Add to playlist",
+          "description": "Seconds per rotation to also add this content to the carousel."
+        }
+      }
+    },
+    "show_animation": {
+      "name": "Show animation",
+      "description": "Show one of the animations bundled with the integration. The upload runs in the background.",
+      "fields": {
+        "animation": {
+          "name": "Animation",
+          "description": "Name of the bundled animation."
+        },
+        "speed": {
+          "name": "Speed",
+          "description": "Animation speed 1-100."
+        }
+      }
+    },
+    "next_animation": {
+      "name": "Next animation",
+      "description": "Show the next bundled animation.",
+      "fields": {
+        "speed": {
+          "name": "Speed",
+          "description": "Animation speed 1-100."
+        }
+      }
+    },
+    "previous_animation": {
+      "name": "Previous animation",
+      "description": "Show the previous bundled animation.",
+      "fields": {
+        "speed": {
+          "name": "Speed",
+          "description": "Animation speed 1-100."
+        }
+      }
+    },
+    "show_camera": {
+      "name": "Show camera",
+      "description": "Show a still frame from a Home Assistant camera on the matrix.",
+      "fields": {
+        "camera_entity": {
+          "name": "Camera",
+          "description": "Camera to take the snapshot from."
+        },
+        "graffiti": {
+          "name": "Graffiti mode",
+          "description": "Cache under the graffiti category."
+        }
+      }
+    },
+    "show_text": {
+      "name": "Show text",
+      "description": "Display scrolling text with solid color or gradient.",
+      "fields": {
+        "message": {
+          "name": "Message",
+          "description": "The text to scroll."
+        },
+        "colors": {
+          "name": "Colors",
+          "description": "Colors as hex RGB or templates."
+        },
+        "speed": {
+          "name": "Speed",
+          "description": "Animation speed 1-100."
+        }
+      }
+    },
+    "show_clock": {
+      "name": "Show clock",
+      "description": "Show the firmware-rendered clock.",
+      "fields": {
+        "style": {
+          "name": "Style",
+          "description": "Clock style 0-7."
+        },
+        "12h": {
+          "name": "12-hour format",
+          "description": "Use a 12-hour clock."
+        },
+        "date": {
+          "name": "Show date",
+          "description": "Show the date next to the time."
+        }
+      }
+    },
+    "draw_pixels": {
+      "name": "Draw pixels",
+      "description": "Direct-draw pixels immediately.",
+      "fields": {
+        "pixels": {
+          "name": "Pixels",
+          "description": "List of {x, y, color}."
+        }
+      }
+    },
+    "playlist_add": {
+      "name": "Playlist add",
+      "description": "Add content to the device carousel, by hash or animation name.",
+      "fields": {
+        "content_hash": {
+          "name": "Content hash",
+          "description": "32-hex-digit content hash of already uploaded content."
+        },
+        "animation": {
+          "name": "Animation",
+          "description": "Name of an already uploaded bundled animation."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Display time in seconds."
+        }
+      }
+    },
+    "playlist_remove": {
+      "name": "Playlist remove",
+      "description": "Remove content (by hash) from the device carousel.",
+      "fields": {
+        "content_hash": {
+          "name": "Content hash",
+          "description": "32-hex-digit content hash."
+        }
+      }
+    },
+    "playlist_clear": {
+      "name": "Playlist clear",
+      "description": "Remove all entries from the device carousel."
+    },
+    "playlist_list": {
+      "name": "Playlist list",
+      "description": "List the device carousel entries with their hashes and names."
+    },
+    "set_speed": {
+      "name": "Set speed",
+      "description": "Set the GIF animation speed.",
+      "fields": {
+        "speed": {
+          "name": "Speed",
+          "description": "Animation speed 1-100."
+        }
+      }
+    },
     "activate": {
       "name": "Activate content",
-      "description": "Re-display previously uploaded content by hash (cache hit = instant, no upload)."
+      "description": "Re-display previously uploaded content by hash or animation name. A cache hit = instant, no upload.",
+      "fields": {
+        "content_hash": {
+          "name": "Content hash",
+          "description": "32-hex-digit content hash returned by any upload service."
+        },
+        "animation": {
+          "name": "Animation",
+          "description": "Name of an already uploaded bundled animation."
+        },
+        "speed": {
+          "name": "Speed",
+          "description": "Animation speed 1-100."
+        },
+        "effect": {
+          "name": "Effect",
+          "description": "Display effect for static images."
+        }
+      }
     }
   }
 }

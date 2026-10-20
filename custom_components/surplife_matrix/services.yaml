@@ -1,6 +1,6 @@
 show_media:
   name: Show media
-  description: Upload and display an image or GIF on the Surplife matrix.
+  description: Upload and display an image, GIF or bundled animation.
   target:
     entity:
       integration: surplife_matrix
@@ -9,10 +9,37 @@ show_media:
     source:
       name: Source
       description: >
-        Bundled animation (builtin:<name>, e.g. builtin:plasma), media path
-        (/media/local/...), http(s) URL, or data: URI
-      required: true
-      example: builtin:rainbow_wave
+        A bundled animation, a path (/media/local/...), an http(s) URL or
+        a data: URI. Use the Media field to pick from the media library.
+      required: false
+      example: plasma
+      selector:
+        select:
+          custom_value: true
+          options:
+            - color_cycle
+            - d20_flames_flattened
+            - fire
+            - ocean
+            - plasma
+            - police_light
+            - popcorn2_flattened
+            - rainbow_wave
+            - scroll_text
+            - spaceship_flattened
+            - starfield
+            - wizard_fireball_flattened
+    media:
+      name: Media
+      description: Pick an image or GIF from the Home Assistant media library.
+      required: false
+      selector:
+        media:
+          accept:
+            - image/gif
+            - image/jpeg
+            - image/png
+            - image/webp
     media_type:
       name: Media type
       description: auto detects image vs GIF
@@ -57,6 +84,83 @@ show_media:
         number:
           min: 1
           max: 255
+
+show_animation:
+  name: Show animation
+  description: >
+    Show one of the animations bundled with the integration. The upload
+    runs in the background, so the call returns immediately.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    animation:
+      name: Animation
+      description: Name of the bundled animation
+      required: true
+      example: plasma
+      selector:
+        select:
+          custom_value: true
+          options:
+            - color_cycle
+            - d20_flames_flattened
+            - fire
+            - ocean
+            - plasma
+            - police_light
+            - popcorn2_flattened
+            - rainbow_wave
+            - scroll_text
+            - spaceship_flattened
+            - starfield
+            - wizard_fireball_flattened
+    speed:
+      name: Speed
+      description: Animation speed 1-100
+      required: false
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+
+next_animation:
+  name: Next animation
+  description: Show the next bundled animation.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    speed:
+      name: Speed
+      description: Animation speed 1-100
+      required: false
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+
+previous_animation:
+  name: Previous animation
+  description: Show the previous bundled animation.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+  fields:
+    speed:
+      name: Speed
+      description: Animation speed 1-100
+      required: false
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 100
 
 show_camera:
   name: Show camera
@@ -156,7 +260,7 @@ draw_pixels:
 
 playlist_add:
   name: Playlist add
-  description: Add uploaded content (by hash) to the device carousel.
+  description: Add content to the device carousel, by hash or animation name.
   target:
     entity:
       integration: surplife_matrix
@@ -164,9 +268,30 @@ playlist_add:
   fields:
     content_hash:
       name: Content hash
-      required: true
+      description: 32-hex-digit content hash of already uploaded content
+      required: false
       selector:
         text:
+    animation:
+      name: Animation
+      description: Name of an already uploaded bundled animation
+      required: false
+      selector:
+        select:
+          custom_value: true
+          options:
+            - color_cycle
+            - d20_flames_flattened
+            - fire
+            - ocean
+            - plasma
+            - police_light
+            - popcorn2_flattened
+            - rainbow_wave
+            - scroll_text
+            - spaceship_flattened
+            - starfield
+            - wizard_fireball_flattened
     duration:
       name: Duration
       description: Display time in seconds
@@ -199,6 +324,14 @@ playlist_clear:
       integration: surplife_matrix
       domain: light
 
+playlist_list:
+  name: Playlist list
+  description: List the device carousel entries with their hashes and names.
+  target:
+    entity:
+      integration: surplife_matrix
+      domain: light
+
 set_speed:
   name: Set speed
   description: Set the GIF animation speed (GIF content only).
@@ -214,11 +347,13 @@ set_speed:
         number:
           min: 1
           max: 100
+
 activate:
   name: Activate content
   description: >
-    Re-display previously uploaded content by hash. A cache hit needs no
-    upload at all — the instant building block for scene automations.
+    Re-display previously uploaded content by hash or animation name. A
+    cache hit needs no upload at all — the instant building block for
+    scene automations.
   target:
     entity:
       integration: surplife_matrix
@@ -227,9 +362,29 @@ activate:
     content_hash:
       name: Content hash
       description: 32-hex-digit content hash returned by any upload service
-      required: true
+      required: false
       selector:
         text:
+    animation:
+      name: Animation
+      description: Name of an already uploaded bundled animation
+      required: false
+      selector:
+        select:
+          custom_value: true
+          options:
+            - color_cycle
+            - d20_flames_flattened
+            - fire
+            - ocean
+            - plasma
+            - police_light
+            - popcorn2_flattened
+            - rainbow_wave
+            - scroll_text
+            - spaceship_flattened
+            - starfield
+            - wizard_fireball_flattened
     speed:
       name: Speed
       description: Animation speed 1-100 (image/GIF content only)

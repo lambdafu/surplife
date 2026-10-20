@@ -1,8 +1,9 @@
 """The Surplife Matrix integration.
 
 Controls Surplife 96x16 LED matrix displays (IOTBT*) over the Bluetooth
-integration's shared BLE stack: a light entity for power/brightness and
-services for content (images, GIFs, text, clock, direct draw, playlist).
+integration's shared BLE stack: a light entity for power/brightness, a
+select entity to pick a bundled animation, and services for content
+(images, GIFs, text, clock, direct draw, playlist).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .animation import AnimationCatalog
 from .const import DOMAIN, PLATFORMS
 from .runtime import SurplifeRuntime
 
@@ -22,7 +24,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Surplife Matrix from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN].setdefault("entities", {})
-    runtime = SurplifeRuntime(hass, entry)
+    # One shared catalog for all devices: it maps content hashes to
+    # animation names, so the mapping survives entity reloads.
+    catalog = hass.data[DOMAIN].setdefault("catalog", AnimationCatalog())
+    runtime = SurplifeRuntime(hass, entry, catalog)
     runtime.async_setup()
     hass.data[DOMAIN][entry.entry_id] = runtime
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

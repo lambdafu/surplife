@@ -35,6 +35,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
+from .animation import AnimationCatalog, AnimationManager
 from .const import (
     DOMAIN,
     RECONNECT_MAX_BACKOFF_S,
@@ -264,7 +265,8 @@ class SurplifeRuntime:
     so entities can subscribe to state changes driven by command ACKs.
     """
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry,
+                 catalog: AnimationCatalog | None = None):
         self.hass = hass
         self.entry = entry
         self.address: str = entry.data["address"]
@@ -276,6 +278,7 @@ class SurplifeRuntime:
         self.wedge_cooldown = WEDGE_COOLDOWN_S
 
         self.connection = PersistentConnection(self)
+        self.animations = AnimationManager(self, catalog)
 
         self.coordinator = DataUpdateCoordinator(
             hass,
@@ -304,6 +307,7 @@ class SurplifeRuntime:
                 "on first connect", self.address)
 
     async def async_close(self) -> None:
+        self.animations.cancel_pending()
         await self.connection.close()
 
     @property

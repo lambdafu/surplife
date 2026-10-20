@@ -30,6 +30,8 @@ _core = types.ModuleType("homeassistant.core")
 _core.HomeAssistant = type("HomeAssistant", (), {})
 _core.ServiceCall = type("ServiceCall", (), {})
 _core.callback = lambda f: f
+_core.SupportsResponse = type("SupportsResponse", (), {
+    "NONE": 0, "OPTIONAL": 1, "ONLY": 2})
 
 _uc = types.ModuleType("homeassistant.helpers.update_coordinator")
 _coordinator_instances = []

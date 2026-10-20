@@ -1,9 +1,16 @@
 """Content services for Surplife Matrix.
 
-show_media (path/URL), show_camera (HA camera snapshot), show_text,
-show_clock, draw_pixels, playlist ops, set_speed, activate. All commands
-run over the runtime's persistent connection (serialized by the command
-lock); the display keeps playing after each upload.
+show_media (path/URL/media library/builtin animation), show_animation,
+next_animation/previous_animation, show_camera (HA camera snapshot),
+show_text, show_clock, draw_pixels, playlist ops, set_speed, activate.
+All commands run over the runtime's persistent connection (serialized by
+the command lock); the display keeps playing after each upload.
+
+The animation services work asynchronously: starting an animation
+returns immediately and the upload continues in the background, because
+pushing a ~40 KB GIF over BLE takes several seconds. The services that
+return a response (show_media, show_animation) expose the content hash
+so it can be used with `activate` and the playlist services.
 """
 
 from __future__ import annotations
@@ -15,7 +22,7 @@ import os
 
 import voluptuous as vol
 from homeassistant.const import ATTR_ENTITY_ID
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
@@ -25,10 +32,14 @@ from .const import (
     GIF_ACTIVATION_DWELL_S,
     SERVICE_ACTIVATE,
     SERVICE_DRAW_PIXELS,
+    SERVICE_NEXT_ANIMATION,
     SERVICE_PLAYLIST_ADD,
     SERVICE_PLAYLIST_CLEAR,
+    SERVICE_PLAYLIST_LIST,
     SERVICE_PLAYLIST_REMOVE,
+    SERVICE_PREVIOUS_ANIMATION,
     SERVICE_SET_SPEED,
+    SERVICE_SHOW_ANIMATION,
     SERVICE_SHOW_CAMERA,
     SERVICE_SHOW_CLOCK,
     SERVICE_SHOW_MEDIA,
@@ -84,8 +95,11 @@ async def _fetch_media(hass: HomeAssistant, source: str) -> bytes:
     """Resolve a media source to raw image/GIF bytes.
 
     Sources: `builtin:<name>` (animations shipped with the integration),
-    /media/local/... paths, http(s) URLs, or data: URIs.
+    a media-library item (dict with `media_content_id`), /media/local
+    paths, http(s) URLs, or data: URIs.
     """
+    if isinstance(source, dict):
+        return await _fetch_media_library(hass, source)
     if source.startswith("builtin:"):
         path = await hass.async_add_executor_job(resolve_builtin, source)
 
@@ -115,6 +129,37 @@ async def _fetch_media(hass: HomeAssistant, source: str) -> bytes:
     return await hass.async_add_executor_job(_read)
 
 
+async def _fetch_media_library(hass: HomeAssistant, item: dict) -> bytes:
+    """Fetch a media-library item selected with the media selector.
+
+    The media browser returns a `media_content_id`; resolving it yields
+    a local path for the files in /media (and an HTTP URL for remote
+    sources, which is fetched below).
+    """
+    content_id = item.get("media_content_id")
+    if not content_id:
+        raise HomeAssistantError("Media selection has no media_content_id")
+
+    from homeassistant.components.media_source import async_resolve_media
+
+    play = await async_resolve_media(hass, content_id, None)
+    if play.path is not None:
+        def _read_path() -> bytes:
+            with open(play.path, "rb") as f:
+                return f.read()
+
+        return await hass.async_add_executor_job(_read_path)
+
+    # Remote source: fetch it over HTTP.
+    import aiohttp
+
+    async with aiohttp.ClientSession() as session, session.get(
+        play.url, timeout=aiohttp.ClientTimeout(total=30)
+    ) as resp:
+        resp.raise_for_status()
+        return await resp.read()
+
+
 def _is_gif(data: bytes) -> bool:
     return data[:3] == b"GIF"
 
@@ -132,9 +177,16 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         return hass.data[DOMAIN][entry_id]
 
     # ── show_media ──────────────────────────────────────────────────
+    # `source` accepts a bundled animation name (optionally prefixed with
+    # "builtin:"), a path, a URL or a data: URI. `media` accepts a
+    # media-library selection. Exactly one of the two must be given.
     show_media_schema = vol.Schema({
         vol.Required(ATTR_ENTITY_ID): cv.entity_id,
-        vol.Required("source"): cv.string,
+        vol.Optional("source"): vol.Any(
+            cv.string,
+            {vol.Required("media_content_id"): cv.string},
+        ),
+        vol.Optional("media"): {vol.Required("media_content_id"): cv.string},
         vol.Optional("media_type", default="auto"): vol.In(
             ["auto", "image", "gif"]),
         vol.Optional("effect", default=1): vol.All(
@@ -146,14 +198,31 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             vol.Coerce(int), vol.Range(1, 255)),
     })
 
-    async def async_show_media(call: ServiceCall) -> None:
+    async def async_show_media(call: ServiceCall) -> dict:
         runtime = _runtime(call.data[ATTR_ENTITY_ID])
-        raw = await _fetch_media(hass, call.data["source"])
+        source = call.data.get("source")
+        media = call.data.get("media")
+        if not source and not media:
+            raise HomeAssistantError(
+                "Either source or media must be given")
+        if source and media:
+            raise HomeAssistantError(
+                "Give either source or media, not both")
+
         media_type = call.data["media_type"]
         graffiti = call.data["graffiti"]
         effect = call.data["effect"]
         speed = call.data["speed"]
 
+        # A bare animation name selects a bundled animation.
+        animation_name = None
+        if isinstance(source, str) and not source.startswith("builtin:"):
+            candidate = source.strip().lower()
+            if candidate in runtime.animations.names:
+                animation_name = candidate
+                source = f"builtin:{candidate}"
+
+        raw = await _fetch_media(hass, media if media else source)
         if media_type == "gif" or (media_type == "auto"
                                    and _is_gif(raw)):
             c_hash = await _upload_gif(runtime, raw, graffiti, speed)
@@ -161,14 +230,77 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             c_hash = await _upload_image(runtime, raw, graffiti,
                                          effect, speed)
 
+        # Remember the animation name so the playlist can show it.
+        if animation_name:
+            runtime.animations.catalog.record(
+                runtime.address, c_hash, animation_name)
+            runtime.animations.set_current(animation_name)
+
         duration = call.data.get("add_to_playlist")
         if duration:
             await runtime.connection.command(
                 lambda _c, conn: _playlist_add_conn(conn, c_hash, duration))
 
+        return {"content_hash": c_hash.hex()}
+
     hass.services.async_register(
         DOMAIN, SERVICE_SHOW_MEDIA, async_show_media,
-        schema=show_media_schema)
+        schema=show_media_schema,
+        supports_response=SupportsResponse.ONLY)
+
+    # ── show_animation ──────────────────────────────────────────────
+    # Starts a bundled animation. The upload runs in the background so
+    # the call returns immediately.
+    show_animation_schema = vol.Schema({
+        vol.Required(ATTR_ENTITY_ID): cv.entity_id,
+        vol.Required("animation"): cv.string,
+        vol.Optional("speed", default=50): vol.All(
+            vol.Coerce(int), vol.Range(1, 100)),
+    })
+
+    async def async_show_animation(call: ServiceCall) -> dict:
+        runtime = _runtime(call.data[ATTR_ENTITY_ID])
+        name = call.data["animation"].strip().lower()
+        if name not in runtime.animations.names:
+            raise HomeAssistantError(
+                f"Unknown animation '{name}'. Available: "
+                f"{', '.join(runtime.animations.names)}")
+        upload = runtime.animations.start(name, call.data["speed"])
+        return {"animation": upload.name, "state": upload.state}
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_SHOW_ANIMATION, async_show_animation,
+        schema=show_animation_schema,
+        supports_response=SupportsResponse.ONLY)
+
+    # ── next_animation / previous_animation ─────────────────────────
+    step_schema = vol.Schema({
+        vol.Required(ATTR_ENTITY_ID): cv.entity_id,
+        vol.Optional("speed", default=50): vol.All(
+            vol.Coerce(int), vol.Range(1, 100)),
+    })
+
+    async def _async_step(call: ServiceCall, delta: int) -> dict:
+        runtime = _runtime(call.data[ATTR_ENTITY_ID])
+        upload = runtime.animations.step(delta)
+        if upload is None:
+            raise HomeAssistantError("No animations available")
+        return {"animation": upload.name, "state": upload.state}
+
+    async def async_next_animation(call: ServiceCall) -> dict:
+        return await _async_step(call, 1)
+
+    async def async_previous_animation(call: ServiceCall) -> dict:
+        return await _async_step(call, -1)
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_NEXT_ANIMATION, async_next_animation,
+        schema=step_schema,
+        supports_response=SupportsResponse.ONLY)
+    hass.services.async_register(
+        DOMAIN, SERVICE_PREVIOUS_ANIMATION, async_previous_animation,
+        schema=step_schema,
+        supports_response=SupportsResponse.ONLY)
 
     # ── show_camera ─────────────────────────────────────────────────
     show_camera_schema = vol.Schema({
@@ -287,24 +419,60 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         DOMAIN, SERVICE_DRAW_PIXELS, async_draw_pixels,
         schema=draw_pixels_schema)
 
-    # ── playlist_add / playlist_remove / playlist_clear ─────────────
+    # ── playlist_add / playlist_remove / playlist_clear / list ───────
+    # `content_hash` or `animation` (a bundled animation name) identify
+    # the content to add.
     playlist_add_schema = vol.Schema({
         vol.Required(ATTR_ENTITY_ID): cv.entity_id,
-        vol.Required("content_hash"): cv.string,
+        vol.Optional("content_hash"): cv.string,
+        vol.Optional("animation"): cv.string,
         vol.Optional("duration", default=10): vol.All(
             vol.Coerce(int), vol.Range(1, 255)),
     })
 
-    async def async_playlist_add(call: ServiceCall) -> None:
+    async def async_playlist_add(call: ServiceCall) -> dict:
         runtime = _runtime(call.data[ATTR_ENTITY_ID])
-        c_hash = _parse_hash(call.data["content_hash"])
+        c_hash = await _resolve_content_hash(runtime, call.data)
         await runtime.connection.command(
             lambda _c, conn: _playlist_add_conn(
                 conn, c_hash, call.data["duration"]))
+        return {"content_hash": c_hash.hex()}
 
     hass.services.async_register(
         DOMAIN, SERVICE_PLAYLIST_ADD, async_playlist_add,
-        schema=playlist_add_schema)
+        schema=playlist_add_schema,
+        supports_response=SupportsResponse.ONLY)
+
+    playlist_list_schema = vol.Schema({
+        vol.Required(ATTR_ENTITY_ID): cv.entity_id,
+    })
+
+    async def async_playlist_list(call: ServiceCall) -> dict:
+        runtime = _runtime(call.data[ATTR_ENTITY_ID])
+        entries: list[dict] = []
+
+        async def _run(_client, conn):
+            flags, details = await conn.get_playlist_raw()
+            durations = {bytes(h): (idx, dur) for idx, _f, dur, h in details}
+            for flag, h in flags:
+                c_hash = bytes(h)
+                index, duration = durations.get(c_hash, (0, 0))
+                entries.append({
+                    "content_hash": c_hash.hex(),
+                    "name": runtime.animations.catalog.name_for(
+                        runtime.address, c_hash),
+                    "index": index,
+                    "duration": duration,
+                    "flag": flag,
+                })
+
+        await runtime.connection.command(_run)
+        return {"entries": entries}
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_PLAYLIST_LIST, async_playlist_list,
+        schema=playlist_list_schema,
+        supports_response=SupportsResponse.ONLY)
 
     playlist_rm_schema = vol.Schema({
         vol.Required(ATTR_ENTITY_ID): cv.entity_id,
@@ -363,14 +531,15 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     # no upload at all — the instant building block for scene automations.
     activate_schema = vol.Schema({
         vol.Required(ATTR_ENTITY_ID): cv.entity_id,
-        vol.Required("content_hash"): cv.string,
+        vol.Optional("content_hash"): cv.string,
+        vol.Optional("animation"): cv.string,
         vol.Optional("speed"): vol.All(vol.Coerce(int), vol.Range(1, 100)),
         vol.Optional("effect"): vol.All(vol.Coerce(int), vol.Range(1, 10)),
     })
 
-    async def async_activate(call: ServiceCall) -> None:
+    async def async_activate(call: ServiceCall) -> dict:
         runtime = _runtime(call.data[ATTR_ENTITY_ID])
-        c_hash = _parse_hash(call.data["content_hash"])
+        c_hash = await _resolve_content_hash(runtime, call.data)
         speed = call.data.get("speed")
         effect = call.data.get("effect")
 
@@ -400,13 +569,40 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 break   # single attempt: one safe command per unknown content
 
         await runtime.connection.command(_run)
+        return {"content_hash": c_hash.hex()}
 
     hass.services.async_register(
         DOMAIN, SERVICE_ACTIVATE, async_activate,
-        schema=activate_schema)
+        schema=activate_schema,
+        supports_response=SupportsResponse.ONLY)
 
 
 # ── Upload helpers ───────────────────────────────────────────────────
+
+async def _resolve_content_hash(runtime: SurplifeRuntime,
+                                 data: dict) -> bytes:
+    """Resolve the content to act on: an explicit hash or an animation.
+
+    For an animation the content must already be in the device cache
+    (uploaded earlier), so the client-side hash mapping is used.
+    """
+    content_hash_text = data.get("content_hash")
+    if content_hash_text:
+        return _parse_hash(content_hash_text)
+
+    name = data.get("animation")
+    if name:
+        c_hash = runtime.animations.catalog.hash_for(
+            runtime.address, name.strip().lower())
+        if c_hash is None:
+            raise HomeAssistantError(
+                f"Animation '{name}' was never uploaded to this device — "
+                "call show_animation first.")
+        return c_hash
+
+    raise HomeAssistantError(
+        "Either content_hash or animation must be given")
+
 
 def _parse_hash(text: str) -> bytes:
     try:
